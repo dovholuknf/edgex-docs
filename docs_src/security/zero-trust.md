@@ -67,3 +67,209 @@ Assume Breach: Minimize the blast radius and segment access. Verify end-to-end e
 
 In a Zero Trust model, security is maintained by continually verifying the trustworthiness of every request as though it originates from an open network. This approach reduces the risk of internal and external threats by implementing strict access controls and continuously monitoring and validating access.
 
+
+
+
+
+
+Steps to use openziti anywhere
+
+1. install openziti overlay somewhere publicly
+1. start the edgex dependencies
+1. create a router and copy the enrollment token to the router
+```
+. .env
+ziti edge login "${OPENZITI_ADVERTISED_ADDRESS}:${OPENZITI_ADVERTISED_PORT}" -u "${ZITI_USER}" -p "${ZITI_PWD}" -y
+ziti edge delete edge-router ${OPENZITI_EDGE_ROUTER_NAME}
+# create router:
+ziti edge create edge-router ${OPENZITI_EDGE_ROUTER_NAME} -t -o ${OPENZITI_EDGE_ROUTER_NAME}.jwt
+docker compose cp ${OPENZITI_EDGE_ROUTER_NAME}.jwt openziti-router:/home/ziggy/${OPENZITI_EDGE_ROUTER_NAME}.jwt
+docker compose exec --user root openziti-router chown ziggy:ziggy /home/ziggy/${OPENZITI_EDGE_ROUTER_NAME}.jwt
+rm ${OPENZITI_EDGE_ROUTER_NAME}.jwt
+```
+
+1. configure openziti so the controller can get to vault
+```
+. .env
+ziti edge login "${OPENZITI_ADVERTISED_ADDRESS}:${OPENZITI_ADVERTISED_PORT}" -u "${ZITI_USER}" -p "${ZITI_PWD}" -y
+ziti edge delete service-policy edgex-vault-bind
+ziti edge delete service-policy edgex-vault-dial
+ziti edge delete service edgex-vault
+ziti edge delete config edgex-vault.intercept.v1
+ziti edge delete config edgex-vault.host.v1
+
+#the name of the router on the controller so the controller can make an underlay request
+OPENZITI_CONTROLLER_ROUTER_NAME=ip-172-31-47-200-edge-router
+ziti edge create config "edgex-vault.intercept.v1" intercept.v1 \
+  '{"protocols":["tcp"],"addresses":["vault.edgex.ziti"], "portRanges":[{"low":8200, "high":8200}]}'
+ziti edge create config "edgex-vault.host.v1" host.v1 \
+   '{"protocol":"tcp", "address":"vault","port":8200}'
+ziti edge create service edgex-vault --configs edgex-vault.intercept.v1,edgex-vault.host.v1
+ziti edge create service-policy edgex-vault-dial Dial --identity-roles '#edgex-vault.dialers' --service-roles @edgex-vault
+ziti edge create service-policy edgex-vault-bind Bind --identity-roles '#edgex-vault.binders' --service-roles @edgex-vault
+
+ziti edge update identity ${OPENZITI_CONTROLLER_ROUTER_NAME} -a 'public,edgex-vault.dialers'
+ziti edge update identity ${OPENZITI_EDGE_ROUTER_NAME} -a 'edgex-vault.binders'
+```
+
+1. from the controller, make sure it can access vault:
+```
+curl http://vault.edgex.ziti:8200
+```
+
+1. configure openziti:
+```bash
+docker run -it --rm \
+  --env-file .env \
+  -e ZITI_ADMIN \
+  -e ZITI_PWD \
+  -e OPENZITI_OIDC_URL="http://vault.edgex.ziti:8200" \
+  -e OPENZITI_PERSISTENCE_PATH="/edgex_openziti" \
+  -v edgex_edgex_openziti:/edgex_openziti \
+  -v ./openziti-init-entrypoint.sh:/openziti-init-entrypoint.sh \
+  --entrypoint "/bin/sh" \
+  --user root \
+  openziti/ziti-cli \
+  -c 'chown -Rc 2002:2001 "${OPENZITI_PERSISTENCE_PATH}" && ./openziti-init-entrypoint.sh'
+```
+
+1. start edgex services
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
+# create router config:
+ZITI_CTRL_ADVERTISED_ADDRESS="${OPENZITI_ADVERTISED_ADDRESS}" \
+ZITI_CTRL_ADVERTISED_PORT="${OPENZITI_ADVERTISED_PORT}" \
+ZITI_ROUTER_ADVERTISED_ADDRESS="${OPENZITI_EDGE_ROUTER_NAME}" \
+ZITI_ROUTER_PORT=3022 \
+ziti create config router edge --tunnelerMode host --routerName ${OPENZITI_EDGE_ROUTER_NAME} -o ./${OPENZITI_EDGE_ROUTER_NAME}.yml
+
+# enroll router:
+ziti router enroll --jwt ./${OPENZITI_EDGE_ROUTER_NAME}.jwt ./${OPENZITI_EDGE_ROUTER_NAME}.yml
+
+# run router:
+ziti router run ./${OPENZITI_EDGE_ROUTER_NAME}.yml
+```
+
+
+
+
+
+
+
+
+
+```
+docker run -it --rm --network edgex_edgex-network --env-file .env my-tzdata-image
+```
+
+```
+wget https://get.openziti.io/install.bash
+bash ./install.bash openziti-router
+
+ziti edge login ${OPENZITI_ADVERTISED_ADDRESS_PORT}} -u $USER -p $PASS -y
+
+mkdir router
+cd router
+ziti edge delete edge-router ${OPENZITI_EDGE_ROUTER_NAME}
+
+# create router:
+ziti edge create edge-router ${OPENZITI_EDGE_ROUTER_NAME} -t -o ${OPENZITI_EDGE_ROUTER_NAME}.jwt
+
+# create router config:
+ZITI_CTRL_ADVERTISED_ADDRESS="${OPENZITI_ADVERTISED_ADDRESS}" \
+ZITI_CTRL_ADVERTISED_PORT="${OPENZITI_ADVERTISED_PORT}" \
+ZITI_ROUTER_ADVERTISED_ADDRESS="${OPENZITI_EDGE_ROUTER_NAME}" \
+ZITI_ROUTER_PORT=3022 \
+ziti create config router edge --tunnelerMode host --routerName ${OPENZITI_EDGE_ROUTER_NAME} -o ./${OPENZITI_EDGE_ROUTER_NAME}.yml
+
+# enroll router:
+ziti router enroll --jwt ./${OPENZITI_EDGE_ROUTER_NAME}.jwt ./${OPENZITI_EDGE_ROUTER_NAME}.yml
+
+# run router:
+ziti router run ./${OPENZITI_EDGE_ROUTER_NAME}.yml
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1. verify the openziti controller can access vault! this is vital for verifying the JWTs presented for authentication
+   this is probably best done by establishing a tunneled service from openziti to vault, wherever vault is, but it's
+   vital to know the address of vault where OpenZiti would be able to send a request to verify a JWT
+1.
+1.
+1.
+1.
+1.
+1.
+1.
+1. this might require installing an openziti router or a ziti-edge-tunnel near vault 
+
