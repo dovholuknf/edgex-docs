@@ -53,6 +53,135 @@ enable this additional security mechanism in the same way.
 #### Overview of EdgeX Foundry integrated with OpenZiti
 ![Overview of EdgeX Foundry integrated with OpenZiti](edgex-openziti.png)
 
+## Securing EdgeX Services With OpenZiti
+
+When running in secure mode, EdgeX Foundry creates and uses strong identities in the form of JWTs for services. 
+When enabling zero trust access, those strong identities are used to authenticate to the OpenZiti overlay network by 
+leveraging a feature of OpenZiti called "external JWT signers". OpenZiti can be configured to trust other 
+authorities, such as the token provider EdgeX Foundry uses (Vault as of July 12, soon to be OpenBao). Once the 
+appropriate trust is configured, OpenZiti can use the strong identities created by another authority for 
+authentication to the overlay network. This is how "external JWT signers" operate. In order for OpenZiti to be able 
+to verify authentication tokens from the external provider, the JWT provider must be addressable by the OpenZiti 
+controller as it will use the JWKS endpoint provided by token provider in order to verify the token.
+
+The OpenZiti external JWT signer must be configured with an expected claim which will be contained within the JWT. 
+As part of the authentication process with OpenZiti, after the JWT is verified as authentic, the configured claim 
+will be inspected and a corresponding OpenZiti must exist with an "external id" set that matches the value of this 
+claim.
+
+### Example JWT Verification With OpenZiti
+
+Let's look at an example verification process to understand better how the JWT from the token provider is used to 
+authenticate to the OpenZiti overlay.
+
+1. After the EdgeX Foundry security bootstrapper completes, a token from the token provider for the target service 
+   will be available to the service.
+2. The token is read into memory.
+3. The token is exchanged with the token provider for a JWT. Here is a representative payload section of a JWT 
+   delivered to the core-command service:
+
+       {
+         "aud": "edgex",
+         "exp": 1720809046,
+         "iat": 1720808146,
+         "iss": "/v1/identity/oidc",
+         "name": "core-command",
+         "namespace": "root",
+         "sub": "790fd597-f773-21a6-158f-ee1158875115"
+       }
+
+   Notice the fields contained within the JWT payload, both the issuer (`iss`) field `name` field are important and 
+   are used in the OpenZiti `ext-jwt-signer` configuration. The `iss` field must match a configured `ext-jwt-signer`.
+4. The JWT is sent to OpenZiti for verification.
+5. OpenZiti makes a request to the token provider's JWKS endpoint (as needed) to obtain the necessary key material 
+   to verify the authenticity of the JWT.
+6. Once the JWT is verified as authentic, the configured field (in this case `name`) read from the JWT.
+7. OpenZiti scans all identities for one with an `--externalId` set to the value from the JWT (in this case 
+   `core-command`)
+8. If an identity is found with an associated auth policy utilizing the expected value (`core-command`), the 
+   identity is considered authenticated.
+
+### Authorizing Access to EdgeX Foundry Services
+
+OpenZiti is also now able to authorize connections to EdgeX Foundry services and when configured to operate in with 
+the zero trust security model, this is how service authorization works. With zero trust enabled, traffic for any 
+particular service must be delivered, authenticated, and authorized by the OpenZiti overlay network. It is no longer 
+necessary to also provide a bearer token to the service.
+
+This allows other, non-EdgeX Foundry services or clients to access services without passing a bearer token to the 
+service. Instead, those clients will be required to have a strong identity and be authenticated and authorized by 
+the zero trust overlay network. OpenZiti does not prevent services from implementing other, additional 
+authentication mechanisms. If a service provides an HTTP server and also requires ancillary authentication in the 
+form of username/password, bearer token, etc., these additional mechanisms maybe be applied by service authors. The 
+EdgeX Foundry services will not require additional authentication when operating in the zero trust security model.
+
+## Controlling Access Through Policies
+#describe attributes and the groupings core- app- device-
+OpenZiti has a flexible authorization model based on policies. In OpenZiti, these are known as 
+[Service Policies](https://openziti.io/docs/learn/core-concepts/security/authorization/policies/overview/). Service 
+policies allow the operator of the overlay network to authorize individual identities or groups of identities to 
+access services, also by name or by grouping.
+
+When EdgeX Foundry is configured using the `openziti-init-entrypoint.sh` script, it will precreate all the services for
+the default EdgeX Foundry services, regardless whether you use these services or not. That way, should you add an 
+optional service later on, the OpenZiti overlay network will likely have an existing service already.
+
+When initializing the OpenZiti overlay for EdgeX Foundry, an initial set of services will be configured in the 
+OpenZiti overlay network. Below is an incomplete listing of those services For the most complete table, refer to the 
+`openziti-init-entrypoint.sh` script itself.
+
+### Listing of EdgeX Foundry ←→ OpenZiti Services
+| EdgeX Foundry Service | OpenZiti Service Name | OpenZiti Configured Intercept Address | Port | Service Attribute |
+|-----------------------|-|---------------------------------------|------|-------------------|
+| core-command | edgex.core-command | core-command.edgex.ziti | 80 | core.svc |
+| core-data | edgex.core-data | core-data.edgex.ziti | 80 | core.svc |
+| core-metadata | edgex.core-metadata | core-metadata.edgex.ziti | 80 | core.svc |
+| ui | edgex.ui | ui.edgex.ziti | 80 | core.svc |
+| rules-engine | edgex.rules-engine | rules-engine.edgex.ziti | 80 | support.svc |
+| support-notifications | edgex.support-notifications | support-notifications.edgex.ziti | 80 | support.svc |
+| support-scheduler | edgex.support-scheduler | support-scheduler.edgex.ziti | 80 | support.svc |
+| device-bacnet-ip | edgex.device-bacnet-ip | device-bacnet-ip.edgex.ziti | 80 | device.svc |
+| device-coap | edgex.device-coap | device-coap.edgex.ziti | 80 | device.svc |
+| device-gpio | edgex.device-gpio | device-gpio.edgex.ziti | 80 | device.svc |
+| device-modbus | edgex.device-modbus | device-modbus.edgex.ziti | 80 | device.svc |
+| device-mqtt | edgex.device-mqtt | device-mqtt.edgex.ziti | 80 | device.svc |
+| device-onvif-camera | edgex.device-onvif-camera | device-onvif-camera.edgex.ziti | 80 | device.svc |
+| device-rest | edgex.device-rest | device-rest.edgex.ziti | 80 | device.svc |
+| device-rfid-llrp | edgex.device-rfid-llrp | device-rfid-llrp.edgex.ziti | 80 | device.svc |
+| device-snmp | edgex.device-snmp | device-snmp.edgex.ziti | 80 | device.svc |
+| device-uart | edgex.device-uart | device-uart.edgex.ziti | 80 | device.svc |
+| device-usb-camera | edgex.device-usb-camera | device-usb-camera.edgex.ziti | 80 | device.svc |
+| device-virtual | edgex.device-virtual | device-virtual.edgex.ziti | 80 | device.svc |
+| app-external-mqtt-trigger | edgex.app-external-mqtt-trigger | app-external-mqtt-trigger.edgex.ziti | 80 | application.svc |
+| app-http-export | edgex.app-http-export | app-http-export.edgex.ziti | 80 | application.svc |
+| app-metrics-influxdb | edgex.app-metrics-influxdb | app-metrics-influxdb.edgex.ziti | 80 | application.svc |
+| app-mqtt-export | edgex.app-mqtt-export | app-mqtt-export.edgex.ziti | 80 | application.svc |
+| app-rfid-llrp-inventory | edgex.app-rfid-llrp-inventory | app-rfid-llrp-inventory.edgex.ziti | 80 | application.svc |
+| app-rules-engine | edgex.app-rules-engine | app-rules-engine.edgex.ziti | 80 | application.svc |
+| app-record-replay | edgex.app-record-replay | app-record-replay.edgex.ziti | 80 | application.svc |
+| app-sample | edgex.app-sample | app-sample.edgex.ziti | 80 | application.svc |
+
+### Granting Access To Services
+
+As shown in the section above, there are essentially four groupings of services:
+* core services, using the `core.svc` attribute
+* support services, using the `support.svc` attribute
+* device services, using the `device.svc` attribute
+* application services, using the `application.svc` attribute
+
+The initialization script will also create 
+
+
+For example, to create a new device service, create an identity for the service and assign it the `--role-attribute` of
+`device.id`. This will authorize the new device service to connect to   
+authorizing the 
+service to act as a service for your own 
+needs 
+and you wish to grant that identity
+
+
+## describe healthcheck proxy
+
 ### Accessing EdgeX Services With OpenZiti
 
 OpenZiti provides software called ["tunnelers"](https://openziti.io/docs/reference/tunnelers/) that adapt classic, 
@@ -157,62 +286,57 @@ Steps to use openziti anywhere
        OPENZITI_CONTROLLER_ROUTER_NAME="${OPENZITI_CONTROLLER_ROUTER_NAME:-quickstart-router}"
 
 1. Create a router with the name OPENZITI_EDGEX_ROUTER_NAME and copy the enrollment token to the router
-```
-ziti edge login "${OPENZITI_ADVERTISED_ADDRESS}:${OPENZITI_ADVERTISED_PORT}" -u "${ZITI_USER}" -p "${ZITI_PWD}" -y
-ziti edge delete edge-router ${OPENZITI_EDGEX_ROUTER_NAME}
-# create router:
-ziti edge create edge-router ${OPENZITI_EDGEX_ROUTER_NAME} -t -o ${OPENZITI_EDGEX_ROUTER_NAME}.jwt
-docker compose cp ${OPENZITI_EDGEX_ROUTER_NAME}.jwt openziti-router:/home/ziggy/${OPENZITI_EDGEX_ROUTER_NAME}.jwt
-docker compose exec --user root openziti-router chown ziggy:ziggy /home/ziggy/${OPENZITI_EDGEX_ROUTER_NAME}.jwt
-rm ${OPENZITI_EDGEX_ROUTER_NAME}.jwt
-```
 
-2. Configure openziti so the controller can get to vault
-```
-ziti edge login "${OPENZITI_ADVERTISED_ADDRESS}:${OPENZITI_ADVERTISED_PORT}" -u "${ZITI_USER}" -p "${ZITI_PWD}" -y
-ziti edge delete service-policy edgex-vault-bind
-ziti edge delete service-policy edgex-vault-dial
-ziti edge delete service edgex-vault
-ziti edge delete config edgex-vault.intercept.v1
-ziti edge delete config edgex-vault.host.v1
+       ziti edge login "${OPENZITI_ADVERTISED_ADDRESS}:${OPENZITI_ADVERTISED_PORT}" -u "${ZITI_USER}" -p "${ZITI_PWD}" -y
+       ziti edge delete edge-router ${OPENZITI_EDGEX_ROUTER_NAME}
+       # create router:
+       ziti edge create edge-router ${OPENZITI_EDGEX_ROUTER_NAME} -t -o ${OPENZITI_EDGEX_ROUTER_NAME}.jwt
+       docker compose cp ${OPENZITI_EDGEX_ROUTER_NAME}.jwt openziti-router:/home/ziggy/${OPENZITI_EDGEX_ROUTER_NAME}.jwt
+       docker compose exec --user root openziti-router chown ziggy:ziggy /home/ziggy/${OPENZITI_EDGEX_ROUTER_NAME}.jwt
+       rm ${OPENZITI_EDGEX_ROUTER_NAME}.jwt
 
-#the name of the router on the controller so the controller can make an underlay request
-ziti edge create config "edgex-vault.intercept.v1" intercept.v1 \
-  '{"protocols":["tcp"],"addresses":["vault.edgex.ziti"], "portRanges":[{"low":8200, "high":8200}]}'
-ziti edge create config "edgex-vault.host.v1" host.v1 \
-   '{"protocol":"tcp", "address":"vault","port":8200}'
-ziti edge create service edgex-vault --configs edgex-vault.intercept.v1,edgex-vault.host.v1
-ziti edge create service-policy edgex-vault-dial Dial --identity-roles '#edgex-vault.dialers' --service-roles @edgex-vault
-ziti edge create service-policy edgex-vault-bind Bind --identity-roles '#edgex-vault.binders' --service-roles @edgex-vault
+1. Configure openziti so the controller can get to vault
 
-ziti edge update identity ${OPENZITI_CONTROLLER_ROUTER_NAME} -a 'public,edgex-vault.dialers'
-ziti edge update identity ${OPENZITI_EDGEX_ROUTER_NAME} -a 'edgex-vault.binders'
-```
+       ziti edge login "${OPENZITI_ADVERTISED_ADDRESS}:${OPENZITI_ADVERTISED_PORT}" -u "${ZITI_USER}" -p "${ZITI_PWD}" -y
+       ziti edge delete service-policy edgex-vault-bind
+       ziti edge delete service-policy edgex-vault-dial
+       ziti edge delete service edgex-vault
+       ziti edge delete config edgex-vault.intercept.v1
+       ziti edge delete config edgex-vault.host.v1
+       
+       #the name of the router on the controller so the controller can make an underlay request
+       ziti edge create config "edgex-vault.intercept.v1" intercept.v1 \
+         '{"protocols":["tcp"],"addresses":["vault.edgex.ziti"], "portRanges":[{"low":8200, "high":8200}]}'
+       ziti edge create config "edgex-vault.host.v1" host.v1 \
+          '{"protocol":"tcp", "address":"vault","port":8200}'
+       ziti edge create service edgex-vault --configs edgex-vault.intercept.v1,edgex-vault.host.v1
+       ziti edge create service-policy edgex-vault-dial Dial --identity-roles '#edgex-vault.dialers' --service-roles @edgex-vault
+       ziti edge create service-policy edgex-vault-bind Bind --identity-roles '#edgex-vault.binders' --service-roles @edgex-vault
+       
+       ziti edge update identity ${OPENZITI_CONTROLLER_ROUTER_NAME} -a 'public,edgex-vault.dialers'
+       ziti edge update identity ${OPENZITI_EDGEX_ROUTER_NAME} -a 'edgex-vault.binders'
 
 1. From the controller, make sure it can access vault:
-```
-curl http://vault.edgex.ziti:8200
 
-# expected response is a 302:
-<a href="/ui/">Temporary Redirect</a>.
-```
+       curl http://vault.edgex.ziti:8200
+       # expected response is a 302:
+       <a href="/ui/">Temporary Redirect</a>.
 
 1. Configure openziti by running `openziti-init-entrypoint.sh` within a temporary docker container:
-```bash
-docker run -it --rm \
-  --env-file .env \
-  -e ZITI_ADMIN \
-  -e ZITI_PWD \
-  -e OPENZITI_OIDC_URL="http://vault.edgex.ziti:8200" \
-  -e OPENZITI_PERSISTENCE_PATH="/edgex_openziti" \
-  -v edgex_edgex_openziti:/edgex_openziti \
-  -v ./openziti-init-entrypoint.sh:/openziti-init-entrypoint.sh \
-  --entrypoint "/bin/sh" \
-  --user root \
-  openziti/ziti-cli \
-  -c 'chown -Rc 2002:2001 "${OPENZITI_PERSISTENCE_PATH}" && ./openziti-init-entrypoint.sh'
-```
 
+       docker run -it --rm \
+         --env-file .env \
+         -e ZITI_ADMIN \
+         -e ZITI_PWD \
+         -e OPENZITI_OIDC_URL="http://vault.edgex.ziti:8200" \
+         -e OPENZITI_PERSISTENCE_PATH="/edgex_openziti" \
+         -v edgex_edgex_openziti:/edgex_openziti \
+         -v ./openziti-init-entrypoint.sh:/openziti-init-entrypoint.sh \
+         --entrypoint "/bin/sh" \
+         --user root \
+         openziti/ziti-cli \
+         -c 'chown -Rc 2002:2001 "${OPENZITI_PERSISTENCE_PATH}" && ./openziti-init-entrypoint.sh'
+ 
 1. start edgex services
 
 
@@ -266,9 +390,6 @@ docker compose -f docker-compose-zero-trust-just-deps.yml up -d
 
 
 ```
-
-
-
 # create router config:
 ZITI_CTRL_ADVERTISED_ADDRESS="${OPENZITI_ADVERTISED_ADDRESS}" \
 ZITI_CTRL_ADVERTISED_PORT="${OPENZITI_ADVERTISED_PORT}" \
